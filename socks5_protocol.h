@@ -35,6 +35,7 @@ enum socks_command {
 	UDP_ASSOCIATE = 0x03,
 };
 
+#undef DOMAIN
 enum socks_address_type {
 	IPV4 = 0x01,
 	DOMAIN = 0x03,

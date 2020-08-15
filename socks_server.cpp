@@ -2,11 +2,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
-#include <errno.h>
-#include <signal.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <unordered_map>
 #define WIN32_LEAN_AND_MEAN
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -14,6 +13,7 @@
 #pragma comment(lib,"ws2_32")
 #include "getopt.h"
 #include "socks5_protocol.h"
+#undef DOMAIN
 
 void* socks_alloc(int len) { return malloc(len); }
 void socks_free(void* p) { free(p); }
@@ -33,25 +33,45 @@ struct IP_REVERSE_MAP_ITEM {
 	unsigned int ipv4;
 	const char* domain;
 };
-int IP_REVERSE_MAP_NUM = 0;
 const char* IP_REVERSE_MAP_TEXT[][2] = {
 	{"eu.wargaming.net","92.223.19.61"},
 	{"eu.wargaming.net","92.223.19.57"},
 	{"uistats.worldofwarships.eu","92.223.18.33"},
 	{"xmpp-wows-eu.wargaming.net","92.223.23.138"},
+	{"royal-navy.worldofwarships.eu","92.223.20.35"},
+	{"cat.wargaming.net","92.223.21.26"},
+	{"cat.wargaming.net","92.223.21.27"},
 };
-IP_REVERSE_MAP_ITEM IP_REVERSE_MAP[100];
+std::unordered_map<unsigned int, const char*> IP_REVERSE_MAP;
+
+void add_domain_reverse_map(const char* domain, const char* ipv4str) {
+	unsigned int ip;
+	if (inet_pton(AF_INET, ipv4str, &ip) <= 0) {
+		printf("Error while converting %s->%s reverse map.\n", ipv4str, domain);
+		exit(1);
+	}
+	IP_REVERSE_MAP[ip] = domain;
+	printf("[IPMAP] Adding %s->%s\n", ipv4str, domain);
+}
 
 void init_domain_reverse_map() {
 	int i;
 	for (i = 0; i < ARRAY_SIZE(IP_REVERSE_MAP_TEXT); i++) {
-		if (inet_pton(AF_INET, IP_REVERSE_MAP_TEXT[i][1], &IP_REVERSE_MAP[i].ipv4) <= 0) {
-			printf("Error while converting %d reverse map.\n", i);
-			exit(1);
-		}
-		IP_REVERSE_MAP[i].domain = IP_REVERSE_MAP_TEXT[i][0];
+		add_domain_reverse_map(IP_REVERSE_MAP_TEXT[i][0], IP_REVERSE_MAP_TEXT[i][1]);
 	}
-	IP_REVERSE_MAP_NUM = i;
+	FILE* f;
+	if (fopen_s(&f, "ip-reverse.txt", "r") == 0 && f) {
+		char domain[1024], ip[1024];
+		while (!feof(f)) {
+			domain[0] = 0;
+			if (fscanf_s(f, "%s %s", domain, (int)sizeof(domain), ip, (int)sizeof(ip)) < 2)break;
+			int domain_len = (int)strlen(domain) + 1;
+			char* domain_heap = new char[domain_len];
+			strcpy_s(domain_heap, domain_len, domain);
+			add_domain_reverse_map(domain_heap, ip);
+		}
+		fclose(f);
+	}
 }
 
 
@@ -163,16 +183,11 @@ SOCKADDR_STORAGE gen_saddr(socks_address_type type, const char* ip, unsigned sho
 	ZeroMemory(&remote, sizeof(remote));
 
 	if (type == IPV4) {
-		int i;
-		for (i = 0; i < IP_REVERSE_MAP_NUM; i++) {
-			if (IP_REVERSE_MAP[i].ipv4 == *(unsigned int*)ip) {
-				break;
-			}
-		}
-		if (i < IP_REVERSE_MAP_NUM) {
-			log_message("reverse map: %hhu.%hhu.%hhu.%hhu to %s:%d", ip[0], ip[1], ip[2], ip[3], IP_REVERSE_MAP[i].domain, htons(port));
+		if (IP_REVERSE_MAP.count(*(unsigned int*)ip)) {
+			const char* domain = IP_REVERSE_MAP[*(unsigned int*)ip];
+			log_message("reverse map: %hhu.%hhu.%hhu.%hhu to %s:%d", ip[0], ip[1], ip[2], ip[3], domain, htons(port));
 			type = DOMAIN;
-			ip = IP_REVERSE_MAP[i].domain;
+			ip = domain;
 		}
 		else {
 			sockaddr_in* remote4 = (sockaddr_in*)&remote;
@@ -219,19 +234,20 @@ SOCKADDR_STORAGE gen_saddr(socks_address_type type, const char* ip, unsigned sho
 
 void tcp_bidirectional_forward(SOCKET fd0, SOCKET fd1)
 {
-	int maxfd, ret;
+	int  ret;
+	int maxfd;
 	fd_set rd_set;
-	size_t nread;
+	int nread;
 	char buffer_r[BUFSIZE];
 
 	log_message("Connecting two sockets");
 
-	maxfd = (fd0 > fd1) ? fd0 : fd1;
+	maxfd = (int)max(fd0, fd1) + 1;
 	while (1) {
 		FD_ZERO(&rd_set);
 		FD_SET(fd0, &rd_set);
 		FD_SET(fd1, &rd_set);
-		ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
+		ret = select(maxfd, &rd_set, NULL, NULL, NULL);
 		if (ret == 0 || ret < 0 && WSAGetLastError() == WSAEINTR) {
 			continue;
 		}
@@ -259,17 +275,17 @@ void print_saddr4(const sockaddr_in sa) {
 }
 
 void udp_relay(SOCKET control_fd, SOCKET local_fd) {
-	int maxfd, ret;
+	int ret, maxfd;
 	SOCKET remote_fd = INVALID_SOCKET;
 	fd_set rd_set;
-	maxfd = max(control_fd, local_fd);
+	maxfd = (int)max(control_fd, local_fd) + 1;
 
 	while (1) {
 		FD_ZERO(&rd_set);
 		FD_SET(control_fd, &rd_set);
 		FD_SET(local_fd, &rd_set);
 		if (remote_fd != INVALID_SOCKET)FD_SET(remote_fd, &rd_set);
-		ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
+		ret = select(maxfd, &rd_set, NULL, NULL, NULL);
 		if (ret == 0 || ret < 0 && WSAGetLastError() == WSAEINTR) {
 			continue;
 		}
@@ -291,7 +307,7 @@ void udp_relay(SOCKET control_fd, SOCKET local_fd) {
 
 				//print_saddr4(*(sockaddr_in*)&saddr_remote);
 
-				int rlen, slen = payload_len - (p - payload);
+				int rlen, slen = int(payload_len - (p - payload));
 				if ((rlen = sendto(remote_fd, p, slen, 0, (sockaddr*)&saddr_remote, sizeof(saddr_remote))) < slen) {
 					printf("Warning! [Ur<-] sent %d bytes, %d expected.\n", rlen, payload_len);
 				}
@@ -325,7 +341,7 @@ void udp_relay(SOCKET control_fd, SOCKET local_fd) {
 					printf("Warning! Dropping incoming UDP packet with af=%d\n", saddr_remote.ss_family);
 				}
 				if (payload_real_start) {
-					const int slen2 = payload + 22 + rlen - payload_real_start;
+					const int slen2 = int(payload + 22 + rlen - payload_real_start);
 					int rlen2 = send(local_fd, payload_real_start, slen2, 0);
 					if (rlen2 != slen2) {
 						printf("Warning! [Ur->] sent %d bytes, %d expected.\n", rlen2, slen2);
@@ -499,7 +515,7 @@ int s5_server_main(int argc, char* argv[])
 
 	{
 		WSADATA wsadata;
-		WSAStartup(MAKEWORD(2, 2), &wsadata);
+		printf("[WSA] WSAStartup = %d\n", WSAStartup(MAKEWORD(2, 2), &wsadata));
 	}
 
 	//signal(SIGPIPE, SIG_IGN);
