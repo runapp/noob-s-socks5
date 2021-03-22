@@ -2,6 +2,16 @@
 
 中文看下边
 
+## Update
+
+For recent OpenVPN, the hwid of tap adapter has changed from `tap0901` to `root\tap0901`. To check it in case of further changings, open Device Manater, select `Tap-Windows Adapter V9`, Properties -> Details -> Hardware IDs, and copy the **full** string into the `badvpn-tun2socks` command.
+
+之前给的例子中，tap网卡的硬件ID是`tap0901`，这也是此前OpenVPN安装时的默认配置。现在新版本的OpenVPN修改成了`root\tap0901`，并且新版tap-windows工具也不再提供`addtap.bat`了，现在还是推荐直接装一个OpenVPN。
+
+例子里的命令已经同步修改。如果将来再发生类似事件，可以直接去设备管理器里找到虚拟网卡-属性-详情-硬件ID，对着照抄就行了。
+
+## English
+
 An it-just-work bare SOCKS5 server in c++. Supports CONNECT and UDP_ASSOC.
 
 Meant to work with `badvpn-tun2socks` and some game accelerator, to seperate game environment from accelerators.
@@ -23,7 +33,7 @@ REM Rename the new TAP interface to "tun2socks"
 netsh in ipv4 set addr tun2socks static address=172.17.3.1/28
 ping eu.wargaming.net
 route add -p 92.223.19.61/20 172.17.3.5
-badvpn-tun2socks.exe --tundev tap0901:tun2socks:172.17.3.1:172.17.3.0:255.255.255.0 --netif-ipaddr 172.17.3.5 --netif-netmask 255.255.255.0 --socks-server-addr 192.168.22.128:1080 --socks5-udp
+badvpn-tun2socks.exe --tundev root\tap0901:tun2socks:172.17.3.1:172.17.3.0:255.255.255.0 --netif-ipaddr 172.17.3.5 --netif-netmask 255.255.255.0 --socks-server-addr 192.168.22.128:1080 --socks5-udp
 ```
 
 - Run on game accelerator machine:
@@ -37,7 +47,7 @@ WorldOfWarships64.exe
 ## 中文说明
 
 - 凑齐 `badvpn-tun2socks` `TAP-win32` 还有本程序，就可以在虚拟机里跑网游加速器了。下面是无脑配置步骤。
-- 先在主机上添加一个TAP适配器(`"C:\Program Files\TAP-Windows\bin\addtap.bat"`），改名为`tun2socks`
+- 先在主机上添加一个TAP适配器(`"C:\Program Files\TAP-Windows\bin\addtap.bat"`），改名为`tun2socks`（此处必须改名！否则需要同步修改`--tundev`参数中的适配器名）
 - 配置IP为`172.17.3.1/28`
 ```netsh in ipv4 set addr tun2socks static address=172.17.3.1/28```
 - 找到游戏服务器的IP，加一个路由
@@ -47,7 +57,7 @@ route add -p 92.223.19.61/20 172.17.3.5
 ```
 - 运行 `badvpn-tun2socks`
 ```cmd
-badvpn-tun2socks.exe --tundev tap0901:tun2socks:172.17.3.1:172.17.3.0:255.255.255.0 --netif-ipaddr 172.17.3.5 --netif-netmask 255.255.255.0 --socks-server-addr 192.168.22.128:1080 --socks5-udp
+badvpn-tun2socks.exe --tundev root\tap0901:tun2socks:172.17.3.1:172.17.3.0:255.255.255.0 --netif-ipaddr 172.17.3.5 --netif-netmask 255.255.255.0 --socks-server-addr 192.168.22.128:1080 --socks5-udp
 ```
 - 虚拟机里配置好加速器，把本项目找个地方扔进去，伪装成游戏
 ```cmd
